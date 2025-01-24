@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+set -e
+
+#####################################
+# Config & Defaults
+#####################################
+CONFIG_FILE="bench.conf"
+
+# Load config if it exists (BENCH_PCKG, BENCH_REGEX, BENCH_DIR, BENCH_TIME, BENCH_COUNT, etc.)
+if [[ -f "$CONFIG_FILE" ]]; then
+  source "$CONFIG_FILE"
+fi
+
+# Default values (overridden by config file and CLI flags)
+BENCH_DIR="${BENCH_DIR:-benchmarks}"
+BENCH_TIME="${BENCH_TIME:-2s}"
+BENCH_COUNT="${BENCH_COUNT:-6}"
+
+#####################################
+# Helper Functions
+#####################################
+
+usage() {
+  cat <<EOF
+Usage: $0 <subcommand> [options]
+
+Subcommands:
+  init   - Run the baseline benchmark (v0)
+  step   - Run a new benchmark version (v1, v2, ...) and compare with previous and baseline
+
+Common options:
+  --dir <path>          Directory to store benchmarks (default: $BENCH_DIR)
+  --package <pkg>       Go package to benchmark
+  --regex <pattern>     Regex for benchmarks to run
+  --benchtime <duration>Time per benchmark run (default: $BENCH_TIME)
+  --count <n>           Number of runs for statistical significance (default: $BENCH_COUNT)
+
+Examples:
+  # Initialize a baseline
+  $0 init --package ./mypackage --regex BenchmarkFoo
+  # After code changes, step
+  $0 step
+EOF
+}
+
+# run_bench <outfile> [additional CLI flags]
+# Calls 'go test' with the given package, regex, etc. and saves output to <outfile>.
+run_bench() {
+  local outfile="$1"; shift
+
+  # We assume that if user wants to override any flags (like --benchtime or --count),
+  # they've been set in the environment or via the CLI parsing below.
+  echo "🏃 Running benchmark for package '$BENCH_PCKG' with regex '$BENCH_REGEX'..."
+  echo "   - Benchmark Duration: $BENCH_TIME per iteration"
+  echo "   - Repetitions: $BENCH_COUNT times"
+  echo "   - Results stored in: $outfile"
+
+  # Create the directory if missing
+  mkdir -p "$BENCH_DIR"
+
+  # Actually run the benchmark
+  go test \
+    "$BENCH_PCKG" \
+    -bench "$BENCH_REGEX" \
+    -benchmem \
+    -benchtime="$BENCH_TIME" \
+    -count="$BENCH_COUNT" \
+    | tee "$outfile"
+
+  echo "✅ Benchmark results saved to $outfile"
+}
+
+#####################################
+# Subcommand: init
+#####################################
+cmd_init() {
+  # Parse CLI args
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) BENCH_DIR="$2"; shift ;;
+      --package) BENCH_PCKG="$2"; shift ;;
+      --regex) BENCH_REGEX="$2"; shift ;;
+      --benchtime) BENCH_TIME="$2"; shift ;;
+      --count) BENCH_COUNT="$2"; shift ;;
+      *)
+        echo "Unknown option: $1"
+        usage
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$BENCH_PCKG" || -z "$BENCH_REGEX" ]]; then
+    echo "Missing --package or --regex arguments."
+    usage
+    exit 1
+  fi
+
+  echo "Initializing baseline benchmark..."
+  echo "  Package: $BENCH_PCKG"
+  echo "  Regex:   $BENCH_REGEX"
+  echo "  Dir:     $BENCH_DIR"
+
+  local outfile="$BENCH_DIR/v0.txt"
+
+  # Run baseline
+  run_bench "$outfile"
+}
+
+#####################################
+# Subcommand: step
+#####################################
+cmd_step() {
+  # Parse CLI args
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dir) BENCH_DIR="$2"; shift ;;
+      --package) BENCH_PCKG="$2"; shift ;;
+      --regex) BENCH_REGEX="$2"; shift ;;
+      --benchtime) BENCH_TIME="$2"; shift ;;
+      --count) BENCH_COUNT="$2"; shift ;;
+      *)
+        echo "Unknown option: $1"
+        usage
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$BENCH_PCKG" || -z "$BENCH_REGEX" ]]; then
+    echo "Missing --package or --regex arguments."
+    usage
+    exit 1
+  fi
+
+  echo "Starting new benchmark version..."
+
+  # Find the latest version number
+  mkdir -p "$BENCH_DIR"
+  local latest
+  latest=$(ls "$BENCH_DIR" 2>/dev/null | grep -Eo 'v[0-9]+' | sort -V | tail -n 1 | grep -Eo '[0-9]+' || echo "")
+  local next=1
+  if [[ -n "$latest" ]]; then
+    next=$((latest + 1))
+  fi
+
+  local outfile="$BENCH_DIR/v$next.txt"
+
+  # Run new benchmark
+  run_bench "$outfile"
+
+  # Compare with previous version
+  if [[ "$next" -gt 1 ]]; then
+    local prev_file="$BENCH_DIR/v$((next - 1)).txt"
+    if [[ -f "$prev_file" ]]; then
+      local diff_file="$BENCH_DIR/v$next-diff-prev.txt"
+      echo "🔍 Comparing v$next against previous version (v$((next - 1)))..."
+      benchstat "$prev_file" "$outfile" | tee "$diff_file"
+    fi
+  fi
+
+  # Compare with baseline (v0) if it exists
+  local baseline_file="$BENCH_DIR/v0.txt"
+  if [[ -f "$baseline_file" ]]; then
+    local diff_baseline_file="$BENCH_DIR/v$next-diff-baseline.txt"
+    echo "🔍 Comparing v$next against baseline (v0)..."
+    benchstat "$baseline_file" "$outfile" | tee "$diff_baseline_file"
+  fi
+}
+
+#####################################
+# Main Entry
+#####################################
+subcommand="$1"
+if [[ -z "$subcommand" ]]; then
+  usage
+  exit 1
+fi
+
+shift # remove the subcommand from $@
+
+case "$subcommand" in
+  init)
+    cmd_init "$@"
+    ;;
+  step)
+    cmd_step "$@"
+    ;;
+  *)
+    echo "Unknown subcommand: $subcommand"
+    usage
+    exit 1
+    ;;
+esac
