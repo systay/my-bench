@@ -48,8 +48,6 @@ EOF
 run_bench() {
   local outfile="$1"; shift
 
-  # We assume that if user wants to override any flags (like --benchtime or --count),
-  # they've been set in the environment or via the CLI parsing below.
   echo "🏃 Running benchmark for package '$BENCH_PCKG' with regex '$BENCH_REGEX'..."
   echo "   - Benchmark Duration: $BENCH_TIME per iteration"
   echo "   - Repetitions: $BENCH_COUNT times"
@@ -137,7 +135,7 @@ cmd_step() {
 
   echo "Starting new benchmark version..."
 
-  # Find the latest version number
+  # Find the latest benchmark version number
   mkdir -p "$BENCH_DIR"
   local latest
   latest=$(ls "$BENCH_DIR" 2>/dev/null | grep -Eo 'v[0-9]+' | sort -V | tail -n 1 | grep -Eo '[0-9]+' || echo "")
@@ -167,6 +165,15 @@ cmd_step() {
     local diff_baseline_file="$BENCH_DIR/v$next-diff-baseline.txt"
     echo "🔍 Comparing v$next against baseline (v0)..."
     benchstat "$baseline_file" "$outfile" | tee "$diff_baseline_file"
+  fi
+
+  # Commit code changes with benchmark result version
+  if git diff --quiet; then
+    echo "No code changes to commit."
+  else
+    git add .
+    git commit -n -m "Benchmark commit for result v$next"
+    echo "✅ Committed code changes with message: 'Benchmark commit for result v$next'"
   fi
 }
 

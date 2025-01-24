@@ -10,7 +10,7 @@ A single Bash script for Go benchmarks with:
 
 - **`init`**: Runs a *baseline benchmark* and saves to `v0.txt`.
 - **`step`**: Runs an *incremental benchmark*, saves results (e.g., `v1.txt`), and compares with both the *previous version* and *baseline*.
-- **No Git Commits**: You control how or where to store benchmark files.
+- **Automated Code Commits**: Code changes are automatically committed with benchmark result version messages.
 - **Configurable**: Use a configuration file or CLI flags to customize behavior.
 
 ## Installation
